@@ -3,6 +3,8 @@ from lxml import etree
 import re
 import urllib, zipfile, shutil
 
+from file_utils import PatchFile
+
 SDK_URL = "https://www.vessel.io/static/files/vesselsdk.zip"
 TEMP_PATH = "/opt/tmp"
 PROJECT_PATH = "/opt/projects2/testapp1"
@@ -12,7 +14,7 @@ ns_android = '{http://schemas.android.com/apk/res/android}'
 
 
 # 1
-print "1. Parsing and updating manifest"
+print "1. Updating manifest"
 manifest_path = os.path.join(PROJECT_PATH, "AndroidManifest.xml")
 manifest_tree = etree.parse(manifest_path)
 
@@ -46,24 +48,16 @@ new_manifest.close()
 
 # 2
 print "2. Parsing and updating source"
-act_src_file = open(act_path)
-act_source = act_src_file.read()
-act_src_file.close()
 
-re_oncreate = re.compile("public class %s.*?onCreate.*?{" % act_name, re.DOTALL)
-m = re_oncreate.search(act_source)
-end_pos = m.end()
-init_str = '\n        VesselSDK.initialize(getApplicationContext(), "%s");' % SECRET_KEY;
-act_source = act_source[:end_pos] + init_str + act_source[end_pos:]
+patch = PatchFile(act_path)
+patch.insert("public class %s.*?onCreate.*?{" % act_name,
+            '\n        VesselSDK.initialize(getApplicationContext(), "%s");' % SECRET_KEY,
+            is_regexp=True)
 
-import_pos = act_source.find("import ")
-import_str = "import com.vessel.VesselSDK;\n"
-act_source = act_source[:import_pos] + import_str + act_source[import_pos:]
-
-os.rename(act_path, act_path + ".old")
-new_src_file = open(act_path, "w")
-new_src_file.write(act_source)
-new_src_file.close()
+patch.insert("import ",
+            "import com.vessel.VesselSDK;\n",
+            before=True)
+patch.save()
 
 # 3
 print "3. Downloading and adding SDK lib"
@@ -84,42 +78,25 @@ shutil.copy(os.path.join(dir_path, 'vesselsdk.jar'), dest_file)
 print "4. Convert to aspectJ project"
 
 dot_project_path = os.path.join(PROJECT_PATH, ".project")
-dot_project_file = open(dot_project_path)
-dot_project = dot_project_file.read()
-dot_project_file.close()
-
-#dot_project_tree = etree.parse(dot_project_path)
-#build_el = dot_project_tree.xpath("//buildSpec")[0]
-#permission_el = etree.Element("buildCommand")
-
-build_pos = dot_project.find("</buildSpec>")
+patch = PatchFile(dot_project_path)
 build_command = """             <buildCommand>
                         <name>org.eclipse.ajdt.core.ajbuilder</name>
                         <arguments>
                         </arguments>
                 </buildCommand>\n"""
-dot_project = dot_project[:build_pos] + build_command + dot_project[build_pos:]
+patch.insert("</buildSpec>",
+             build_command,
+             before=True)
 
-natures_str = "<natures>"
-natures_pos = dot_project.find(natures_str) + len(natures_str)
-nature_str = "\n\t\t\t<nature>org.eclipse.ajdt.ui.ajnature</nature>"
-
-dot_project = dot_project[:natures_pos] + nature_str + dot_project[natures_pos:]
-dot_project_file = open(dot_project_path, 'w')
-dot_project_file.write(dot_project)
-dot_project_file.close()
+patch.insert("<natures>",
+             "\n\t\t\t<nature>org.eclipse.ajdt.ui.ajnature</nature>")
+patch.save()
 
 # classpath
 dot_class_path = os.path.join(PROJECT_PATH, ".classpath")
-dot_class_file = open(dot_class_path)
-dot_class = dot_class_file.read()
-dot_class_file.close()
+patch = PatchFile(dot_class_path)
+patch.insert("</classpath>",
+             '<classpathentry kind="con" path="org.eclipse.ajdt.core.ASPECTJRT_CONTAINER"/>\n',
+             before=True)
+patch.save()
 
-classpath_str = "</classpath>"
-classpath_pos = dot_class.find(classpath_str)
-entry_str = '<classpathentry kind="con" path="org.eclipse.ajdt.core.ASPECTJRT_CONTAINER"/>\n'
-dot_class = dot_class[:classpath_pos] + entry_str + dot_class[classpath_pos:]
-
-dot_class_file = open(dot_class_path, 'w')
-dot_class_file.write(dot_class)
-dot_class_file.close()
